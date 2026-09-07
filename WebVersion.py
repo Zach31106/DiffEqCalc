@@ -64,6 +64,31 @@ def draw_chart(x, y, xl, xr, slope=None):
     return fig
 
 
+def format_error(exc):
+    """Convert common parser/solver exceptions into user-friendly messages."""
+    msg = str(exc).strip()
+    lower = msg.lower()
+    if "x-range" in lower and "different" in lower:
+        return "Invalid x-range. The left and right bounds must be different."
+    if "enter an equation" in lower:
+        return "Please enter an equation before pressing Graph."
+    if "could not solve the equation for y''" in lower:
+        return "Unable to solve for y''. Check that the equation is written in a solvable form."
+    if "could not solve the equation for y'" in lower:
+        return "Unable to solve for y'. Check that the equation is written in a solvable form."
+    if "could not solve the equation for y." in lower:
+        return "Unable to solve for y. Check that the equation explicitly defines y."
+    if "must contain '='" in lower:
+        return "Differential equations must contain '='."
+    if "recognizable form" in lower:
+        return "The equation could not be recognized. Use x, y, y', or y'' in the equation."
+    if isinstance(exc, SyntaxError) or "syntax" in lower:
+        return "There is a syntax error in the equation. Check parentheses and operators."
+    if "float" in lower or "numeric" in lower:
+        return "Invalid numeric input. Check the x-range and initial conditions."
+    return f"Unable to graph the equation. {msg}" if msg else "Unable to graph the equation. Check the equation and inputs."
+
+
 def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
     """
     Convert the calculator entry into either:
@@ -311,6 +336,7 @@ defaults = {
     "last_plotted_IVP1": None,
     "last_plotted_IVP2": None,
     "error_message": None,
+    "equation_history": [],
 }
 
 for key, default in defaults.items():
@@ -572,6 +598,27 @@ with right:
 
 
 # ============================================================
+# EQUATION HISTORY
+# ============================================================
+
+if st.session_state.equation_history:
+    st.markdown("**Previous equations**")
+    selected_history = st.selectbox(
+        "Load a previous equation",
+        ["Select an equation..."] + [item[0] for item in reversed(st.session_state.equation_history)],
+        key="equation_history_select",
+        label_visibility="collapsed",
+    )
+    if selected_history != "Select an equation...":
+        match = next((item for item in st.session_state.equation_history if item[0] == selected_history), None)
+        if match:
+            st.session_state.equationText = match[0]
+            st.session_state.calculationText = match[1]
+            st.session_state.input_stack = [(match[0], match[1])]
+            st.rerun()
+
+
+# ============================================================
 # BUTTON MAPPING
 # ============================================================
 
@@ -708,6 +755,13 @@ with action_cols[8]:
             st.session_state.last_display_equation = st.session_state.equationText
             st.session_state.last_parser_equation = st.session_state.calculationText
 
+            # Keep a small history of successfully graphed equations.
+            history_entry = (st.session_state.equationText, st.session_state.calculationText)
+            if history_entry[0].strip():
+                if not st.session_state.equation_history or st.session_state.equation_history[-1] != history_entry:
+                    st.session_state.equation_history.append(history_entry)
+                    st.session_state.equation_history = st.session_state.equation_history[-10:]
+
             # Remember the exact values used for this plot so later edits to
             # the x-span or initial conditions can trigger an automatic replot.
             st.session_state.last_plotted_spanXL = float((st.session_state.spanXL or "").strip() or 0)
@@ -722,7 +776,7 @@ with action_cols[8]:
             st.session_state.error_message = None
 
         except Exception as exc:
-            st.session_state.error_message = f"Error: {exc}"
+            st.session_state.error_message = format_error(exc)
         st.rerun()
 
 with action_cols[9]:
