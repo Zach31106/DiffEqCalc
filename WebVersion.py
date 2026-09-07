@@ -3,9 +3,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from sympy import symbols, Eq, solve, lambdify
+from sympy import symbols, Eq, solve, lambdify, Function, latex
 from sympy.parsing.sympy_parser import parse_expr
 from scipy.integrate import odeint
+
+
+# ============================================================
+# ORIGINAL DIFFERENTIAL-EQUATION LOGIC
+# ============================================================
 
 def step_function(x):
     """Unit-step function used by the calculator."""
@@ -27,6 +32,7 @@ def slope_field(f, x_range, y_range, step=0.2):
     u = np.ones_like(x)
     v = f(x, y)
     norm = np.sqrt(u**2 + v**2)
+    # Avoid division by zero in pathological slope-field inputs.
     norm = np.where(norm == 0, 1, norm)
     return x, y, u / norm, v / norm
 
@@ -72,6 +78,7 @@ def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
     if xr == xl:
         raise ValueError("The x-range must have different left and right bounds.")
 
+    # Preserve the original parser convention.
     input_string = parser_str.strip()
     if not input_string:
         raise ValueError("Enter an equation before pressing Graph.")
@@ -84,6 +91,9 @@ def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
         lhs = None
         rhs = None
 
+    # -----------------------------
+    # Second-order differential eq.
+    # -----------------------------
     if "y2" in input_string:
         if "=" not in input_string:
             raise SyntaxError("Second-order equations must contain '='.")
@@ -122,6 +132,9 @@ def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
             None,
         )
 
+    # -----------------------------
+    # First-order differential eq.
+    # -----------------------------
     if "y1" in input_string:
         if "=" not in input_string:
             raise SyntaxError("First-order differential equations must contain '='.")
@@ -158,6 +171,9 @@ def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
             y1_function,
         )
 
+    # -----------------------------
+    # Explicit y(x) equation.
+    # -----------------------------
     if "y0" in input_string:
         if "=" not in input_string:
             raise SyntaxError("Explicit equations must contain '='.")
@@ -190,6 +206,9 @@ def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
             None,
         )
 
+    # -----------------------------
+    # Constant / ordinary expression
+    # -----------------------------
     if "=" in input_string:
         raise SyntaxError(
             "The equation must contain x, y, y', or y'' in a recognizable form."
@@ -197,6 +216,8 @@ def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
 
     x_vals = np.linspace(xl, xr, 1001)
 
+    # Keep the original calculator behavior, but limit eval() to a
+    # small math namespace rather than the full Python builtins namespace.
     allowed_names = {
         "np": np,
         "sqrt": np.sqrt,
@@ -221,6 +242,11 @@ def graph_input(display_str, parser_str, xl_str, xr_str, ivp1, ivp2):
     y_vals = np.full_like(x_vals, float(constant_value), dtype=float)
 
     return draw_chart(x_vals, y_vals, xl, xr, None)
+
+
+# ============================================================
+# STREAMLIT GUI / TKINTER-LIKE INPUT BEHAVIOR
+# ============================================================
 
 st.set_page_config(
     page_title="Differential Equation Visualizer",
@@ -265,6 +291,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+# Session state replaces Tkinter's persistent Text widgets / globals.
 defaults = {
     "equationText": "",
     "calculationText": "",
@@ -307,6 +335,7 @@ def delete_last_input():
 
     display_value, parser_value = st.session_state.input_stack.pop()
 
+    # rsplit() matches the original Tkinter delete-last-entry behavior.
     st.session_state.equationText = st.session_state.equationText.rsplit(
         display_value, 1
     )[0]
@@ -316,6 +345,12 @@ def delete_last_input():
 
 
 def set_value(which, text):
+    """Store an initial condition in session state.
+
+    Streamlit reruns the script after every button press, so the editable
+    text field lives in its own widget state while IVP1/IVP2 are the stable
+    values used by the solver.
+    """
     try:
         value = int(str(text).strip())
     except (TypeError, ValueError):
@@ -347,48 +382,73 @@ def reset_calculator():
     st.session_state.IVP1 = 0
     st.session_state.IVP2 = 0
 
+    # Widget state is deleted here so the next rerun recreates the text
+    # inputs with empty values. This avoids changing a widget's state after
+    # it has already been instantiated in the current run.
     st.session_state.pop("ivp1_input", None)
     st.session_state.pop("ivp2_input", None)
 
 
-def format_equation_latex(display_text):
-    text = (display_text or "").strip()
+def format_equation_latex(parser_text):
+    """Convert the calculator expression into properly formatted LaTeX.
+
+    The parser expression is used rather than the display text so SymPy can
+    automatically format mathematical operations such as multiplication,
+    division, and exponents. For example:
+        4*x      -> 4x
+        4/x      -> 4/x as a fraction
+        x**2     -> x²
+        (x+1)**2 -> (x+1)²
+    """
+    text = (parser_text or "").strip()
     if not text:
         return ""
 
-    replacements = [
-        ("y''", r"y''"),
-        ("arcsin(", r"\arcsin("),
-        ("arccos(", r"\arccos("),
-        ("arctan(", r"\arctan("),
-        ("sin(", r"\sin("),
-        ("cos(", r"\cos("),
-        ("tan(", r"\tan("),
-        ("ln(", r"\ln("),
-        ("abs(", r"\operatorname{abs}("),
-        ("u(", r"u("),
-        ("δ(", r"\delta("),
-        ("π", r"\pi"),
-        ("√(", r"\sqrt{"),
-    ]
-    for old, new in replacements:
-        text = text.replace(old, new)
+    x = symbols("x")
+    y = symbols("y")
+    y1 = symbols("y'")
+    y2 = symbols("y''")
+    y0 = y
+    u = Function("u")
+    delta = Function("delta")
 
-    text = text.replace("^(", "^{")
-    if "^{" in text:
-        text = text.replace(")", "}", 1)
+    local_dict = {
+        "x": x,
+        "y": y,
+        "y0": y0,
+        "y1": y1,
+        "y2": y2,
+        "u": u,
+        "delta": delta,
+        "step_function": u,
+        "impulse_function": delta,
+    }
 
-    if "\\sqrt{" in text:
-        open_idx = text.find("\\sqrt{")
-        if open_idx >= 0:
-            close_idx = text.find(")", open_idx)
-            if close_idx >= 0:
-                text = text[:close_idx] + "}" + text[close_idx + 1:]
+    # Strip the NumPy namespace and map the calculator's special functions
+    # to names that SymPy can render naturally.
+    normalized = (
+        text.replace("np.", "")
+        .replace("step_function", "u")
+        .replace("impulse_function", "delta")
+    )
 
-    return text
+    try:
+        if "=" in normalized:
+            lhs_text, rhs_text = normalized.split("=", 1)
+            lhs = parse_expr(lhs_text, local_dict=local_dict)
+            rhs = parse_expr(rhs_text, local_dict=local_dict)
+            return rf"{latex(lhs)} = {latex(rhs)}"
+
+        expr = parse_expr(normalized, local_dict=local_dict)
+        return latex(expr)
+    except Exception:
+        # Fall back to the raw display expression if the user has not yet
+        # entered a syntactically complete expression.
+        return normalized
 
 
 def replot_saved_equation_if_inputs_changed():
+    """Replot the most recently graphed equation when range/IVPs change."""
     if not st.session_state.last_parser_equation:
         return
 
@@ -438,9 +498,15 @@ def initial_figure():
     fig.tight_layout()
     return fig
 
+
+# ============================================================
+# TOP SECTION — SAME GENERAL LAYOUT AS THE PROVIDED STREAMLIT GUI
+# ============================================================
+
 left, right = st.columns([1, 1])
 
 with left:
+    # X-span controls in a single bordered block for a cleaner visual hierarchy.
     with st.container(border=True):
         st.markdown("**X range**")
         span_left, span_operator, span_right = st.columns([1, 0.5, 1])
@@ -475,7 +541,7 @@ with left:
 
     if st.session_state.last_display_equation:
         st.markdown("**Graphed equation**")
-        st.latex(format_equation_latex(st.session_state.last_display_equation))
+        st.latex(format_equation_latex(st.session_state.last_parser_equation))
 
     iv1, iv2 = st.columns(2)
 
@@ -485,6 +551,8 @@ with left:
     with iv2:
         ivp2_text = st.text_input("y'(x1)", key="ivp2_input")
 
+    # Initial conditions are read automatically from the inputs on every
+    # Streamlit rerun, just like the x-span fields. Empty fields fall back to 0.
     try:
         st.session_state.IVP1 = int(ivp1_text.strip() or 0)
         st.session_state.IVP2 = int(ivp2_text.strip() or 0)
@@ -492,6 +560,8 @@ with left:
     except ValueError:
         st.session_state.error_message = "Initial conditions must be integers."
 
+# Once an equation has been graphed, changing x-span or initial conditions
+# automatically replots that saved equation.
 replot_saved_equation_if_inputs_changed()
 
 with right:
@@ -499,6 +569,11 @@ with right:
         st.pyplot(st.session_state.last_fig, clear_figure=False)
     else:
         st.pyplot(initial_figure(), clear_figure=False)
+
+
+# ============================================================
+# BUTTON MAPPING
+# ============================================================
 
 mapping = {
     "x": "x",
@@ -540,6 +615,11 @@ mapping = {
     "+": "+",
 }
 
+
+# Display text and parser text are intentionally separate.  Function buttons
+# keep their compact labels in the GUI, but insert only the function name and
+# opening parenthesis into the equation display, matching the original
+# Tkinter behavior.
 display_mapping = {
     "^a": "^(",
     "sin()": "sin(",
@@ -560,6 +640,11 @@ def make_input_button(label, row_number):
     if st.button(label, key=f"input_{row_number}_{label}", use_container_width=True):
         input_entry(display_mapping.get(label, label), mapping[label])
         st.rerun()
+
+
+# ============================================================
+# BUTTON GRID — PRESERVES THE PROVIDED STREAMLIT LAYOUT
+# ============================================================
 
 def row(buttons, row_number):
     cols = st.columns(11)
@@ -623,11 +708,14 @@ with action_cols[8]:
             st.session_state.last_display_equation = st.session_state.equationText
             st.session_state.last_parser_equation = st.session_state.calculationText
 
+            # Remember the exact values used for this plot so later edits to
+            # the x-span or initial conditions can trigger an automatic replot.
             st.session_state.last_plotted_spanXL = float((st.session_state.spanXL or "").strip() or 0)
             st.session_state.last_plotted_spanXR = float((st.session_state.spanXR or "").strip() or 1)
             st.session_state.last_plotted_IVP1 = st.session_state.IVP1
             st.session_state.last_plotted_IVP2 = st.session_state.IVP2
 
+            # Match Tkinter behavior: successful Graph clears equation entry.
             st.session_state.equationText = ""
             st.session_state.calculationText = ""
             st.session_state.input_stack = []
@@ -646,6 +734,13 @@ with action_cols[10]:
     if st.button("Reset", key="reset_button", use_container_width=True):
         reset_calculator()
         st.rerun()
+
+
+
+
+# ============================================================
+# ERROR DISPLAY
+# ============================================================
 
 if st.session_state.error_message:
     st.error(st.session_state.error_message)
