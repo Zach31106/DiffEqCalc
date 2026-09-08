@@ -413,6 +413,7 @@ def reset_calculator():
     # it has already been instantiated in the current run.
     st.session_state.pop("ivp1_input", None)
     st.session_state.pop("ivp2_input", None)
+    st.session_state.pop("equation_history_select", None)
 
 
 def format_equation_latex(parser_text):
@@ -603,19 +604,61 @@ with right:
 
 if st.session_state.equation_history:
     st.markdown("**Previous equations**")
+    history_options = ["Select an equation..."] + [
+        item[0] for item in reversed(st.session_state.equation_history)
+    ]
     selected_history = st.selectbox(
         "Load a previous equation",
-        ["Select an equation..."] + [item[0] for item in reversed(st.session_state.equation_history)],
+        history_options,
         key="equation_history_select",
         label_visibility="collapsed",
     )
+
+    # Selecting a previous equation restores it AND immediately graphs it using
+    # the current x-range and initial conditions. The equation entry box is
+    # cleared afterward, matching normal Graph behavior.
     if selected_history != "Select an equation...":
-        match = next((item for item in st.session_state.equation_history if item[0] == selected_history), None)
+        match = next(
+            (item for item in st.session_state.equation_history if item[0] == selected_history),
+            None,
+        )
         if match:
-            st.session_state.equationText = match[0]
-            st.session_state.calculationText = match[1]
-            st.session_state.input_stack = [(match[0], match[1])]
-            st.rerun()
+            display_text, parser_text = match
+            try:
+                fig = graph_input(
+                    display_text,
+                    parser_text,
+                    st.session_state.spanXL,
+                    st.session_state.spanXR,
+                    st.session_state.IVP1,
+                    st.session_state.IVP2,
+                )
+                st.session_state.last_fig = fig
+                st.session_state.last_display_equation = display_text
+                st.session_state.last_parser_equation = parser_text
+
+                # Store the exact settings used for this graph so subsequent
+                # x-range / IVP changes can trigger automatic replots.
+                st.session_state.last_plotted_spanXL = float(
+                    (st.session_state.spanXL or "").strip() or 0
+                )
+                st.session_state.last_plotted_spanXR = float(
+                    (st.session_state.spanXR or "").strip() or 1
+                )
+                st.session_state.last_plotted_IVP1 = st.session_state.IVP1
+                st.session_state.last_plotted_IVP2 = st.session_state.IVP2
+
+                st.session_state.equationText = ""
+                st.session_state.calculationText = ""
+                st.session_state.input_stack = []
+                st.session_state.error_message = None
+
+                # Return the selector to its placeholder after the graph has
+                # been loaded, preventing it from re-triggering on every rerun.
+                st.session_state.pop("equation_history_select", None)
+                st.rerun()
+            except Exception as exc:
+                st.session_state.error_message = f"Error loading previous equation: {format_error(exc)}"
 
 
 # ============================================================
