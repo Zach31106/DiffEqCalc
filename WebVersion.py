@@ -617,7 +617,7 @@ if st.session_state.equation_history:
     # Selecting a previous equation restores it AND immediately graphs it using
     # the current x-range and initial conditions. The equation entry box is
     # cleared afterward, matching normal Graph behavior.
-    if selected_history != "Select an equation...":
+    if selected_history != "Plot an Equation":
         match = next(
             (item for item in st.session_state.equation_history if item[0] == selected_history),
             None,
